@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chat UI</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <meta name="description" content="A modern AI chat assistant powered by Groq LLaMA — fast, smart, beautiful.">
+  <title>ChatUI &mdash; AI Assistant</title>
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="app">
   <aside class="sidebar">
@@ -51,12 +52,14 @@
           <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
         </button>
         <textarea class="input-area__textarea" rows="1" placeholder="Message AI..."></textarea>
+        <button id="voice-btn" class="btn btn--icon input-area__voice" title="Record voice" style="position:relative">🎤</button>
+        <button id="tts-toggle" class="btn btn--icon input-area__tts" title="Toggle voice">🔊</button>
         <button class="btn btn--icon input-area__send" title="Send message">
           <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
         </button>
       </div>
     </div>
   </main>
-  <script src="/static/script.js"></script>
+  <script src="/static/script.js?v=3"></script>
 </body>
 </html>

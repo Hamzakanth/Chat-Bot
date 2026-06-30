@@ -1,5 +1,9 @@
+console.log('script.js loaded; SpeechRecognition supported:', !!(window.SpeechRecognition || window.webkitSpeechRecognition));
+
 document.addEventListener('DOMContentLoaded', () => {
   const textarea = document.querySelector('.input-area__textarea');
+  const voiceBtn = document.getElementById('voice-btn');
+  const ttsToggle = document.getElementById('tts-toggle');
   const themeToggle = document.querySelector('.theme-toggle');
   const sendBtn = document.querySelector('.input-area__send');
   const newChatBtn = document.getElementById('new-chat-btn');
@@ -17,6 +21,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function saveSessions() {
     localStorage.setItem('chat_sessions', JSON.stringify(sessions));
+  }
+
+  function deleteSession(id) {
+    const idx = sessions.findIndex(s => s.id === id);
+    if (idx === -1) return;
+    const wasActive = currentSessionId === id;
+    sessions.splice(idx, 1);
+    saveSessions();
+
+    if (wasActive) {
+      if (sessions.length) {
+        // Switch to first remaining session without touching the list yet
+        currentSessionId = sessions[0].id;
+        localStorage.setItem('current_session_id', currentSessionId);
+      } else {
+        // No sessions left — create a fresh one (createSession calls renderRecentList)
+        createSession();
+        return;
+      }
+    }
+
+    // Always rebuild the list so the deleted item disappears immediately
+    renderRecentList();
+    const session = findSession(currentSessionId);
+    renderChat(session);
+    updateTopbarTitle(session);
   }
 
   function findSession(id) {
@@ -48,9 +78,27 @@ document.addEventListener('DOMContentLoaded', () => {
       const li = document.createElement('li');
       li.className = 'sidebar__item';
       li.dataset.id = session.id;
-      const title = session.title || (session.messages && session.messages[0] && session.messages[0].text) || 'New Chat';
-      li.textContent = title.length > 40 ? title.slice(0, 37) + '...' : title;
-      li.addEventListener('click', () => setCurrentSession(session.id));
+
+      const titleText = session.title || (session.messages && session.messages[0] && session.messages[0].text) || 'New Chat';
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'sidebar__item-title';
+      titleSpan.textContent = titleText.length > 40 ? titleText.slice(0, 37) + '...' : titleText;
+      titleSpan.addEventListener('click', () => setCurrentSession(session.id));
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn btn--icon sidebar__delete';
+      deleteBtn.title = 'Delete chat';
+      deleteBtn.innerText = '🗑';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const sessionId = li.dataset.id;
+        console.log('delete clicked for session:', sessionId);
+        if (sessionId && confirm('Delete this chat?')) deleteSession(sessionId);
+      });
+
+      li.appendChild(titleSpan);
+      li.appendChild(deleteBtn);
       sidebarList.appendChild(li);
     });
     highlightActiveInSidebar();
@@ -175,6 +223,10 @@ document.addEventListener('DOMContentLoaded', () => {
     textarea.value = '';
     textarea.style.height = 'auto';
 
+    // Immediately update topbar title so it reflects the current prompt
+    const currentSession = findSession(currentSessionId);
+    if (currentSession) updateTopbarTitle(currentSession);
+
     const aiMessageDiv = addMessage('...', 'ai');
     const bubble = aiMessageDiv.querySelector('.message__bubble');
 
@@ -202,6 +254,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Save final AI message
       saveMessageToSession(botText, 'ai');
+      // Optionally speak the AI response
+      try { speakText(botText); } catch (e) { console.error('speakText failed', e); }
     } catch (error) {
       bubble.innerHTML = 'Error: ' + error.message;
     }
@@ -230,5 +284,136 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       setCurrentSession(currentSessionId);
     }
+  }
+
+  // --- Voice (Speech-to-Text) and TTS (Text-to-Speech) integration ---
+  let ttsEnabled = true;
+  let ttsSpeaking = false;
+
+  // Create a stop-TTS button next to the speaker toggle
+  const ttsStopBtn = document.createElement('button');
+  ttsStopBtn.id = 'tts-stop-btn';
+  ttsStopBtn.className = 'btn btn--icon input-area__tts-stop';
+  ttsStopBtn.title = 'Stop speaking';
+  ttsStopBtn.innerHTML = '⏹';
+  ttsStopBtn.style.display = 'none';
+  if (ttsToggle && ttsToggle.parentElement) {
+    ttsToggle.parentElement.insertBefore(ttsStopBtn, ttsToggle.nextSibling);
+  }
+
+  ttsStopBtn.addEventListener('click', () => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    ttsSpeaking = false;
+    ttsStopBtn.style.display = 'none';
+  });
+
+  if (ttsToggle) {
+    ttsToggle.classList.toggle('active', ttsEnabled);
+    ttsToggle.addEventListener('click', () => {
+      ttsEnabled = !ttsEnabled;
+      ttsToggle.classList.toggle('active', ttsEnabled);
+      ttsToggle.title = ttsEnabled ? 'Voice on' : 'Voice off';
+      if (!ttsEnabled && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        ttsSpeaking = false;
+        ttsStopBtn.style.display = 'none';
+      }
+    });
+  }
+
+  // --- Listening indicator pill ---
+  const listeningIndicator = document.createElement('div');
+  listeningIndicator.className = 'listening-indicator';
+  listeningIndicator.innerHTML = '<span class="listening-dot"></span>Listening… tap mic to stop';
+  listeningIndicator.style.display = 'none';
+  document.body.appendChild(listeningIndicator);
+
+  function showListening() {
+    voiceBtn.classList.add('listening');
+    voiceBtn.title = 'Tap to stop';
+    voiceBtn.innerHTML = '⏹️';
+    listeningIndicator.style.display = 'flex';
+  }
+
+  function hideListening() {
+    voiceBtn.classList.remove('listening');
+    voiceBtn.title = 'Record voice';
+    voiceBtn.innerHTML = '🎤';
+    listeningIndicator.style.display = 'none';
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition, recognizing = false;
+  if (SpeechRecognition && voiceBtn) {
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onstart  = () => { recognizing = true;  showListening(); };
+    recognition.onend    = () => { recognizing = false; hideListening(); };
+    recognition.onerror  = (e) => {
+      recognizing = false;
+      hideListening();
+      console.error('Speech recognition error', e);
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results).map(r => r[0].transcript).join('');
+      textarea.value = transcript;
+      handleSend();
+    };
+
+    voiceBtn.addEventListener('click', () => {
+      if (recognizing) {
+        recognition.stop();
+      } else {
+        try { recognition.start(); } catch (e) { console.warn(e); }
+      }
+    });
+  } else if (voiceBtn) {
+    voiceBtn.disabled = true;
+    voiceBtn.classList.add('disabled');
+    voiceBtn.title = 'Speech recognition not available in this browser';
+    voiceBtn.addEventListener('click', () => {
+      alert('Speech recognition is not available in this browser. Try Chrome/Edge on desktop or use HTTPS.');
+    });
+  }
+
+  // Event delegation for sidebar item title clicks (not delete — delete has its own listener)
+  if (sidebarList) {
+    sidebarList.addEventListener('click', (e) => {
+      // Ignore clicks on delete buttons — they have their own listeners
+      if (e.target.closest('.sidebar__delete')) return;
+      // If a session item was clicked, open that session
+      const item = e.target.closest('.sidebar__item');
+      if (item && item.dataset && item.dataset.id) {
+        setCurrentSession(item.dataset.id);
+      }
+    });
+  }
+
+  function speakText(text) {
+    if (!text || !window.speechSynthesis || !ttsEnabled) return;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-US';
+      u.onstart = () => {
+        ttsSpeaking = true;
+        ttsStopBtn.style.display = '';
+      };
+      u.onend = () => {
+        ttsSpeaking = false;
+        ttsStopBtn.style.display = 'none';
+      };
+      u.onerror = () => {
+        ttsSpeaking = false;
+        ttsStopBtn.style.display = 'none';
+      };
+      window.speechSynthesis.speak(u);
+    } catch (e) { console.error('TTS error', e); }
   }
 });
